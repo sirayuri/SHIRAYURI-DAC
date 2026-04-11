@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 #include <math.h>
 #include <string.h>
+#include <arm_math.h>
 #include <usbd_audio_if.h>
 /* USER CODE END Includes */
 
@@ -34,7 +35,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define MUTE_THRESHOLD 96000
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -72,27 +73,31 @@ static void MX_SAI1_Init(void);
 
 void FillFromRing(int16_t *dst, uint32_t samples)
 {
+  uint32_t req_48k_samples = samples / 2;
+
   uint32_t wp = write_pos;
   uint32_t rp = read_pos;
   uint32_t stored = (wp >= rp) ? (wp - rp) : (RING_SAMPLES - rp + wp);
 
-  if (stored >= samples)
+  if (stored >= req_48k_samples)
   {
-    /* データが十分にある場合はそのまま転送 */
-    for(uint32_t i = 0; i < samples; i++)
-    {
-      dst[i] = ringbuf[read_pos];
-      read_pos = (read_pos + 1) % RING_SAMPLES;
-    }
+	// C言語のVLA(可変長配列)を避けるため、最大想定サイズで確保
+	int16_t temp_48k[AUDIO_SAMPLES / 2];
+
+	// 1. リングバッファから48kHzのデータを128要素(64ペア)抽出
+	for(uint32_t i = 0; i < req_48k_samples; i++)
+	{
+	  temp_48k[i] = ringbuf[read_pos];
+	  read_pos = (read_pos + 1) % RING_SAMPLES;
+	}
+
+	// 2. DSPへ投入！ temp_48k(128要素) -> [FPU処理] -> dst(256要素)へ直接展開
+	DSP_Process_Upsample(temp_48k, dst);
   }
   else
   {
-    /* 万が一のアンダーラン発生時はゼロ埋め（異音防止） */
-    for(uint32_t i = 0; i < samples; i++)
-    {
-      dst[i] = 0;
-      HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
-    }
+	memset(dst, 0, samples * sizeof(int16_t));
+    HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
   }
 }
 
@@ -142,6 +147,14 @@ int main(void)
   MX_SAI1_Init();
   MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 2 */
+  extern arm_fir_interpolate_instance_f32 S_Left;
+  extern arm_fir_interpolate_instance_f32 S_Right;
+  extern const float32_t fir_coeffs[];
+  extern float32_t fir_state_L[];
+  extern float32_t fir_state_R[];
+
+  arm_fir_interpolate_init_f32(&S_Left, 2, 64, (float32_t*)fir_coeffs, fir_state_L, 64);
+  arm_fir_interpolate_init_f32(&S_Right, 2, 64, (float32_t*)fir_coeffs, fir_state_R, 64);
 
   //バッファをクリア
   memset(audio_buf, 0, sizeof(audio_buf));
@@ -167,7 +180,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    __WFI();
+//    __WFI();
   }
   /* USER CODE END 3 */
 }
@@ -263,7 +276,7 @@ static void MX_SAI1_Init(void)
   hsai_BlockB1.Init.OutputDrive = SAI_OUTPUTDRIVE_ENABLE;
   hsai_BlockB1.Init.NoDivider = SAI_MASTERDIVIDER_ENABLE;
   hsai_BlockB1.Init.FIFOThreshold = SAI_FIFOTHRESHOLD_HF;
-  hsai_BlockB1.Init.AudioFrequency = SAI_AUDIO_FREQUENCY_48K;
+  hsai_BlockB1.Init.AudioFrequency = SAI_AUDIO_FREQUENCY_96K;
   hsai_BlockB1.Init.SynchroExt = SAI_SYNCEXT_DISABLE;
   hsai_BlockB1.Init.MonoStereoMode = SAI_STEREOMODE;
   hsai_BlockB1.Init.CompandingMode = SAI_NOCOMPANDING;

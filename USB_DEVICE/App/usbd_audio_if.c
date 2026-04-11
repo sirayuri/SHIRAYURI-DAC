@@ -23,6 +23,7 @@
 
 /* USER CODE BEGIN INCLUDE */
 #include "main.h"
+#include "arm_math.h"
 /* USER CODE END INCLUDE */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -30,14 +31,50 @@
 
 #define RING_SAMPLES 4096	//リングバッファの要素数
 
+#define UPSAMPLE_FACTOR 2
+#define NUM_TAPS 64
+#define BLOCK_SIZE 64
 /* Private macro -------------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
 
+const float32_t fir_coeffs[64] = {
+    0.00000000f, 0.00005542f, -0.00024752f, 0.00063742f,
+    -0.00131957f, 0.00242506f, -0.00412493f, 0.00663659f,
+    -0.01023929f, 0.01531139f, -0.02241808f, 0.03252458f,
+    -0.04756669f, 0.07228207f, -0.12233039f, 0.29736110f,
+    0.89939356f, -0.17552399f, 0.09206817f, -0.05819011f,
+    0.03923743f, -0.02700933f, 0.01856343f, -0.01256231f,
+    0.00828091f, -0.00526357f, 0.00318831f, -0.00180969f,
+    0.00093466f, -0.00041266f, 0.00013130f, -0.00001326f,
+    -0.00001326f, 0.00013130f, -0.00041266f, 0.00093466f,
+    -0.00180969f, 0.00318831f, -0.00526357f, 0.00828091f,
+    -0.01256231f, 0.01856343f, -0.02700933f, 0.03923743f,
+    -0.05819011f, 0.09206817f, -0.17552399f, 0.89939356f,
+    0.29736110f, -0.12233039f, 0.07228207f, -0.04756669f,
+    0.03252458f, -0.02241808f, 0.01531139f, -0.01023929f,
+    0.00663659f, -0.00412493f, 0.00242506f, -0.00131957f,
+    0.00063742f, -0.00024752f, 0.00005542f, 0.00000000f,
+};
+
+// DSPインスタンス（LとRで完全に独立させる）
+arm_fir_interpolate_instance_f32 S_Left;
+arm_fir_interpolate_instance_f32 S_Right;
+
+// 状態保存用バッファ（CMSIS-DSPの仕様に基づくサイズ計算）
+#define STATE_SIZE ((NUM_TAPS / UPSAMPLE_FACTOR) + BLOCK_SIZE - 1)
+float32_t fir_state_L[STATE_SIZE];
+float32_t fir_state_R[STATE_SIZE];
+
+// 変換用の中間バッファ
+float32_t float_in_L[BLOCK_SIZE];
+float32_t float_in_R[BLOCK_SIZE];
+float32_t float_out_L[BLOCK_SIZE * UPSAMPLE_FACTOR];
+float32_t float_out_R[BLOCK_SIZE * UPSAMPLE_FACTOR];
+
 extern int16_t ringbuf[];	//リングバッファ
 extern volatile uint32_t write_pos;	//現在書き込み量
-
 /* USER CODE END PV */
 
 /** @addtogroup STM32_USB_OTG_DEVICE_LIBRARY
@@ -314,7 +351,25 @@ void HalfTransfer_CallBack_FS(void)
 }
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_IMPLEMENTATION */
+void DSP_Process_Upsample(int16_t *pIn_48k, int16_t *pOut_96k)
+{
+    // 1. LR分離 ＆ int16 -> float32 変換
+    for (int i = 0; i < BLOCK_SIZE; i++) {
+        float_in_L[i] = (float32_t)pIn_48k[i * 2];
+        float_in_R[i] = (float32_t)pIn_48k[i * 2 + 1];
+    }
 
+    // 2. DSPコア発火！（ここでFPUが限界駆動して2倍に増殖＆フィルタリング）
+    arm_fir_interpolate_f32(&S_Left, float_in_L, float_out_L, BLOCK_SIZE);
+    arm_fir_interpolate_f32(&S_Right, float_in_R, float_out_R, BLOCK_SIZE);
+
+    // 3. ステレオ合体 ＆ float32 -> int16 変換
+    for (int i = 0; i < (BLOCK_SIZE * UPSAMPLE_FACTOR); i++) {
+        // ※FIRフィルタのリンギングによるオーバーフローを防ぐため、少しゲインを下げる (0.95倍など)
+        pOut_96k[i * 2]     = (int16_t)(float_out_L[i] * 0.95f);
+        pOut_96k[i * 2 + 1] = (int16_t)(float_out_R[i] * 0.95f);
+    }
+}
 /* USER CODE END PRIVATE_FUNCTIONS_IMPLEMENTATION */
 
 /**

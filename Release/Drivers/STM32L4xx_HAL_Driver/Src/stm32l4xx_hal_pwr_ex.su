@@ -12,9 +12,9 @@
 ../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr_ex.c:634:19:HAL_PWREx_DisableGPIOPullDown	0	static
 ../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr_ex.c:704:6:HAL_PWREx_EnablePullUpPullDownConfig	0	static
 ../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr_ex.c:716:6:HAL_PWREx_DisablePullUpPullDownConfig	0	static
-../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr_ex.c:751:19:HAL_PWREx_SetSRAM2ContentRetention	0	static
 ../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr_ex.c:727:6:HAL_PWREx_EnableSRAM2ContentRetention	0	static
 ../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr_ex.c:736:6:HAL_PWREx_DisableSRAM2ContentRetention	0	static
+../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr_ex.c:751:19:HAL_PWREx_SetSRAM2ContentRetention	0	static
 ../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr_ex.c:878:6:HAL_PWREx_EnablePVM1	0	static
 ../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr_ex.c:887:6:HAL_PWREx_DisablePVM1	0	static
 ../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_pwr_ex.c:919:6:HAL_PWREx_EnablePVM3	0	static

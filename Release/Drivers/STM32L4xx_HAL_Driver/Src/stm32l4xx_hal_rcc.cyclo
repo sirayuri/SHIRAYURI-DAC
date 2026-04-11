@@ -2,8 +2,8 @@
 ../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_rcc.c:265:19:HAL_RCC_DeInit	8
 ../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_rcc.c:1339:6:HAL_RCC_MCOConfig	1
 ../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_rcc.c:1398:10:HAL_RCC_GetSysClockFreq	8
-../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_rcc.c:405:19:HAL_RCC_OscConfig	88
-../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_rcc.c:1097:19:HAL_RCC_ClockConfig	22
+../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_rcc.c:405:19:HAL_RCC_OscConfig	92
+../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_rcc.c:1097:19:HAL_RCC_ClockConfig	23
 ../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_rcc.c:1486:10:HAL_RCC_GetHCLKFreq	1
 ../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_rcc.c:1497:10:HAL_RCC_GetPCLK1Freq	1
 ../Drivers/STM32L4xx_HAL_Driver/Src/stm32l4xx_hal_rcc.c:1509:10:HAL_RCC_GetPCLK2Freq	1

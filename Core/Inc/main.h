@@ -75,6 +75,7 @@ extern volatile uint32_t write_pos;
 extern volatile uint32_t read_pos;
 extern uint8_t audio_started;
 
+
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus
