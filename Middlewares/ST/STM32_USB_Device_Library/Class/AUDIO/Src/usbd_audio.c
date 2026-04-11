@@ -694,7 +694,7 @@ static uint8_t USBD_AUDIO_SOF(USBD_HandleTypeDef *pdev)
 	int32_t error = (ema_stored_x256 / 256) - (RING_SAMPLES / 2);
 
 	// 3. PI制御
-	int32_t P_term = error * 2;
+	int32_t P_term = error * 3;
 
 	integral_error += error;
 	if (integral_error > 50000) integral_error = 50000;

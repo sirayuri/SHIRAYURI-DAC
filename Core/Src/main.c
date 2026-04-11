@@ -91,6 +91,7 @@ void FillFromRing(int16_t *dst, uint32_t samples)
     for(uint32_t i = 0; i < samples; i++)
     {
       dst[i] = 0;
+      HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
     }
   }
 }
