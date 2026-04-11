@@ -97,7 +97,7 @@ void FillFromRing(int16_t *dst, uint32_t samples)
   else
   {
 	memset(dst, 0, samples * sizeof(int16_t));
-    HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
+//    HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
   }
 }
 
