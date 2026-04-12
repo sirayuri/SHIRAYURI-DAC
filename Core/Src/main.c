@@ -49,7 +49,7 @@ DMA_HandleTypeDef hdma_sai1_b;
 
 /* USER CODE BEGIN PV */
 
-int16_t audio_buf[AUDIO_SAMPLES];	//DMAに書き込むよう
+int32_t audio_buf[AUDIO_SAMPLES];	//DMAに書き込むよう
 int16_t ringbuf[RING_SAMPLES];	//リングバッファ
 volatile uint32_t write_pos = 0;
 volatile uint32_t read_pos = 0;
@@ -71,7 +71,7 @@ static void MX_SAI1_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-void FillFromRing(int16_t *dst, uint32_t samples)
+void FillFromRing(int32_t *dst, uint32_t samples)
 {
   uint32_t req_48k_samples = samples / 2;
 
@@ -96,7 +96,7 @@ void FillFromRing(int16_t *dst, uint32_t samples)
   }
   else
   {
-	memset(dst, 0, samples * sizeof(int16_t));
+	memset(dst, 0, samples * sizeof(int32_t));
 //    HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
   }
 }
@@ -269,7 +269,7 @@ static void MX_SAI1_Init(void)
   hsai_BlockB1.Instance = SAI1_Block_B;
   hsai_BlockB1.Init.Protocol = SAI_FREE_PROTOCOL;
   hsai_BlockB1.Init.AudioMode = SAI_MODEMASTER_TX;
-  hsai_BlockB1.Init.DataSize = SAI_DATASIZE_16;
+  hsai_BlockB1.Init.DataSize = SAI_DATASIZE_32;
   hsai_BlockB1.Init.FirstBit = SAI_FIRSTBIT_MSB;
   hsai_BlockB1.Init.ClockStrobing = SAI_CLOCKSTROBING_FALLINGEDGE;
   hsai_BlockB1.Init.Synchro = SAI_ASYNCHRONOUS;

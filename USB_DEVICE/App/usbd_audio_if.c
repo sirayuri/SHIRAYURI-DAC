@@ -233,6 +233,7 @@ static int8_t AUDIO_AudioCmd_FS(uint8_t* pbuf, uint32_t size, uint8_t cmd)
 	      memset(ringbuf, 0, sizeof(int16_t) * RING_SAMPLES);
 	      write_pos = 0;
 	      read_pos = 0;
+	      audio_started = 0;
 
 	      // 2. ミュート解除（アンプON）
 	      HAL_GPIO_WritePin(Amp_SHDN_GPIO_Port, Amp_SHDN_Pin, SET);
@@ -351,24 +352,30 @@ void HalfTransfer_CallBack_FS(void)
 }
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_IMPLEMENTATION */
-void DSP_Process_Upsample(int16_t *pIn_48k, int16_t *pOut_96k)
+void DSP_Process_Upsample(int16_t *pIn_48k, int32_t *pOut_96k_32)
 {
-    // 1. LR分離 ＆ int16 -> float32 変換
-    for (int i = 0; i < BLOCK_SIZE; i++) {
-        float_in_L[i] = (float32_t)pIn_48k[i * 2];
-        float_in_R[i] = (float32_t)pIn_48k[i * 2 + 1];
-    }
+	for (int i = 0; i < BLOCK_SIZE; i++) {
+		float_in_L[i] = (float32_t)pIn_48k[i * 2];
+		float_in_R[i] = (float32_t)pIn_48k[i * 2 + 1];
+	}
 
-    // 2. DSPコア発火！（ここでFPUが限界駆動して2倍に増殖＆フィルタリング）
-    arm_fir_interpolate_f32(&S_Left, float_in_L, float_out_L, BLOCK_SIZE);
-    arm_fir_interpolate_f32(&S_Right, float_in_R, float_out_R, BLOCK_SIZE);
+	arm_fir_interpolate_f32(&S_Left, float_in_L, float_out_L, BLOCK_SIZE);
+	arm_fir_interpolate_f32(&S_Right, float_in_R, float_out_R, BLOCK_SIZE);
 
-    // 3. ステレオ合体 ＆ float32 -> int16 変換
-    for (int i = 0; i < (BLOCK_SIZE * UPSAMPLE_FACTOR); i++) {
-        // ※FIRフィルタのリンギングによるオーバーフローを防ぐため、少しゲインを下げる (0.95倍など)
-    	pOut_96k[i * 2]     = (int16_t)__SSAT((int32_t)(float_out_L[i] * 0.95f), 16);
-    	pOut_96k[i * 2 + 1] = (int16_t)__SSAT((int32_t)(float_out_R[i] * 0.95f), 16);
-    }
+	for (int i = 0; i < (BLOCK_SIZE * 2); i++) {
+		// 1. floatの状態で計算
+		float32_t outL = float_out_L[i] * 65536.0f * 0.05f; // 少し余裕を見て0.90
+		float32_t outR = float_out_R[i] * 65536.0f * 0.05f;
+
+		// 2. 32bit整数の限界でクランプ（飽和演算）
+		if (outL > 2147483647.0f)  outL = 2147483647.0f;
+		if (outL < -2147483648.0f) outL = -2147483648.0f;
+		if (outR > 2147483647.0f)  outR = 2147483647.0f;
+		if (outR < -2147483648.0f) outR = -2147483648.0f;
+
+		pOut_96k_32[i * 2]     = (int32_t)outL;
+		pOut_96k_32[i * 2 + 1] = (int32_t)outR;
+	}
 }
 /* USER CODE END PRIVATE_FUNCTIONS_IMPLEMENTATION */
 

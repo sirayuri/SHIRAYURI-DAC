@@ -134,8 +134,8 @@ void HAL_SAI_MspInit(SAI_HandleTypeDef* hsai)
     hdma_sai1_b.Init.Direction = DMA_MEMORY_TO_PERIPH;
     hdma_sai1_b.Init.PeriphInc = DMA_PINC_DISABLE;
     hdma_sai1_b.Init.MemInc = DMA_MINC_ENABLE;
-    hdma_sai1_b.Init.PeriphDataAlignment = DMA_PDATAALIGN_HALFWORD;
-    hdma_sai1_b.Init.MemDataAlignment = DMA_MDATAALIGN_HALFWORD;
+    hdma_sai1_b.Init.PeriphDataAlignment = DMA_PDATAALIGN_WORD;
+    hdma_sai1_b.Init.MemDataAlignment = DMA_MDATAALIGN_WORD;
     hdma_sai1_b.Init.Mode = DMA_CIRCULAR;
     hdma_sai1_b.Init.Priority = DMA_PRIORITY_LOW;
     if (HAL_DMA_Init(&hdma_sai1_b) != HAL_OK)
