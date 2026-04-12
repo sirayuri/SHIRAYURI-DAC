@@ -7453,9 +7453,9 @@ Disassembly of section .text:
  8004f28:	200036ec 	.word	0x200036ec
  8004f2c:	20002de8 	.word	0x20002de8
  8004f30:	200036e0 	.word	0x200036e0
- 8004f34:	49200000 	.word	0x49200000
- 8004f38:	c9200000 	.word	0xc9200000
- 8004f3c:	454ccccd 	.word	0x454ccccd
+ 8004f34:	48555555 	.word	0x48555555
+ 8004f38:	c8555555 	.word	0xc8555555
+ 8004f3c:	4619999a 	.word	0x4619999a
 
 08004f40 <USBD_FS_DeviceDescriptor>:
  8004f40:	2312      	movs	r3, #18

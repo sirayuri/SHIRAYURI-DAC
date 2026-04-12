@@ -364,8 +364,8 @@ void DSP_Process_Upsample(int16_t *pIn_48k, int32_t *pOut_96k_32)
 
 	for (int i = 0; i < (BLOCK_SIZE * 2); i++) {
 		// 1. floatの状態で計算
-		float32_t outL = float_out_L[i] * 65536.0f * 0.05f; // 少し余裕を見て0.90
-		float32_t outR = float_out_R[i] * 65536.0f * 0.05f;
+		float32_t outL = float_out_L[i] * 65536.0f * 0.15f;
+		float32_t outR = float_out_R[i] * 65536.0f * 0.15f;
 
 		// 2. 32bit整数の限界でクランプ（飽和演算）
 		if (outL > 2147483647.0f)  outL = 2147483647.0f;
