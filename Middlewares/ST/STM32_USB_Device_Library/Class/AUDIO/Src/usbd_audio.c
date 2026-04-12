@@ -87,7 +87,7 @@ EndBSPDependencies */
   */
 uint8_t feedback_data[3] = {0x00, 0x00, 0x0C};
 uint8_t usb_rx_temp_buffer[200];
-static int32_t ema_stored_x256 = 2048 * 256; // RING_SAMPLES/2 を256倍精度で保持
+static int32_t ema_stored_x256 = (RING_SAMPLES / 2) * 256; // RING_SAMPLES/2 を256倍精度で保持
 static int32_t integral_error = 0;           // 積分項
 /**
   * @}

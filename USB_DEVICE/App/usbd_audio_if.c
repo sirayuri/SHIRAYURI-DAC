@@ -29,7 +29,7 @@
 /* Private typedef -----------------------------------------------------------*/
 /* Private define ------------------------------------------------------------*/
 
-#define RING_SAMPLES 4096	//リングバッファの要素数
+//#define RING_SAMPLES 4096	//リングバッファの要素数
 
 #define UPSAMPLE_FACTOR 2
 #define NUM_TAPS 64
