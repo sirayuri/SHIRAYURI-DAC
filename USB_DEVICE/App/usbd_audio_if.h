@@ -115,7 +115,7 @@ void TransferComplete_CallBack_FS(void);
 void HalfTransfer_CallBack_FS(void);
 
 /* USER CODE BEGIN EXPORTED_FUNCTIONS */
-
+void DSP_Process_Upsample(int16_t *pIn_48k, int32_t *pOut_96k_32);
 /* USER CODE END EXPORTED_FUNCTIONS */
 
 /**
