@@ -56,7 +56,6 @@ volatile uint32_t read_pos = 0;
 volatile uint8_t audio_started = 0;
 volatile uint32_t audio_underrun_count = 0;
 volatile uint32_t audio_overrun_count = 0;
-volatile uint32_t audio_missing_packet_count = 0;
 uint8_t is_playing = 0;
 uint32_t silence_cnt = 0;
 
@@ -91,7 +90,6 @@ void AudioPipeline_Reset(void)
   audio_started = 0U;
   audio_underrun_count = 0U;
   audio_overrun_count = 0U;
-  audio_missing_packet_count = 0U;
 }
 
 uint32_t Audio_GetSaiDmaWordPosition(void)

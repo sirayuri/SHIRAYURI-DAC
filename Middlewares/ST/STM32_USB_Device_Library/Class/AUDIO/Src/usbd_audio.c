@@ -62,7 +62,6 @@ EndBSPDependencies */
 /* Includes ------------------------------------------------------------------*/
 #include "usbd_audio.h"
 #include "usbd_ctlreq.h"
-#include "usbd_audio_if.h"
 #include "main.h"
 
 /** @addtogroup STM32_USB_DEVICE_LIBRARY
@@ -100,9 +99,6 @@ static uint32_t measured_feedback_q14 = AUDIO_FEEDBACK_NOMINAL_Q14;
 static uint32_t feedback_last_dma_pos = 0U;
 static uint32_t feedback_accumulated_words = 0U;
 static uint32_t feedback_measure_sofs = 0U;
-static uint32_t audio_sof_sequence = 0U;
-static uint32_t audio_last_packet_sof = 0U;
-static uint8_t audio_received_packet = 0U;
 /**
   * @}
   */
@@ -429,9 +425,6 @@ static uint8_t USBD_AUDIO_Init(USBD_HandleTypeDef *pdev, uint8_t cfgidx)
   haudio->wr_ptr = 0U;
   haudio->rd_ptr = 0U;
   haudio->rd_enable = 0U;
-  audio_sof_sequence = 0U;
-  audio_last_packet_sof = 0U;
-  audio_received_packet = 0U;
   AUDIO_ResetFeedbackEstimator();
 
   /* Initialize the Audio output Hardware layer */
@@ -585,16 +578,10 @@ static uint8_t USBD_AUDIO_Setup(USBD_HandleTypeDef *pdev,
                 {
                   ((USBD_AUDIO_ItfTypeDef *)pdev->pUserData[pdev->classId])->
                       AudioCmd(NULL, 0U, AUDIO_CMD_STOP);
-                  audio_sof_sequence = 0U;
-                  audio_last_packet_sof = 0U;
-                  audio_received_packet = 0U;
                   AUDIO_ResetFeedbackEstimator();
                 }
                 else
                 {
-                  audio_sof_sequence = 0U;
-                  audio_last_packet_sof = 0U;
-                  audio_received_packet = 0U;
                   AUDIO_ResetFeedbackEstimator();
 
                   ((USBD_AUDIO_ItfTypeDef *)pdev->pUserData[pdev->classId])->
@@ -775,17 +762,6 @@ static uint8_t USBD_AUDIO_SOF(USBD_HandleTypeDef *pdev)
 
   if ((haudio != NULL) && (haudio->alt_setting == 1U))
   {
-    /* One OUT packet is expected per Full-Speed frame while alt 1 is active.
-       ISO has no retry, so conceal a missing packet instead of leaving a hard
-       discontinuity in the ring buffer. */
-    if ((audio_received_packet != 0U) &&
-        (audio_last_packet_sof != audio_sof_sequence))
-    {
-      AUDIO_ConcealMissingPacket_FS();
-      audio_last_packet_sof = audio_sof_sequence;
-    }
-    audio_sof_sequence++;
-
     /* Measure the real HSI/PLLSAI/SAI rate against USB SOF.  This removes the
        several-second PI hunting caused by assuming an exact 96 kHz SAI clock. */
     AUDIO_UpdateFeedbackRate();
@@ -1015,13 +991,6 @@ static uint8_t USBD_AUDIO_DataOut(USBD_HandleTypeDef *pdev, uint8_t epnum)
 	  {
 	    /* 1. 今回受信した実際のサイズ（192 または 196）を取得 */
 	    PacketSize = (uint16_t)USBD_LL_GetRxDataSize(pdev, epnum);
-
-	    if ((PacketSize != 0U) && (PacketSize <= sizeof(usb_rx_temp_buffer)) &&
-	        ((PacketSize & 3U) == 0U))
-	    {
-	      audio_last_packet_sof = audio_sof_sequence;
-	      audio_received_packet = 1U;
-	    }
 
 	    /* 2. STのバッファは一切経由せず、Temp bufferのデータをそのまま PeriodicTC(ringbuf) へ叩き込む */
 	    ((USBD_AUDIO_ItfTypeDef *)pdev->pUserData[pdev->classId])->PeriodicTC(usb_rx_temp_buffer, PacketSize, AUDIO_OUT_TC);

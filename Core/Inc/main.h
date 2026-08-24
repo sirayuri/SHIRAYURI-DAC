@@ -79,7 +79,6 @@ extern volatile uint8_t audio_started;
 extern volatile uint8_t usb_audio_muted;
 extern volatile uint32_t audio_underrun_count;
 extern volatile uint32_t audio_overrun_count;
-extern volatile uint32_t audio_missing_packet_count;
 void AudioPipeline_Reset(void);
 uint32_t Audio_GetSaiDmaWordPosition(void);
 
