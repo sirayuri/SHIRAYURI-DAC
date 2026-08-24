@@ -231,8 +231,8 @@ static int8_t AUDIO_AudioCmd_FS(uint8_t* pbuf, uint32_t size, uint8_t cmd)
 	    case AUDIO_CMD_PLAY:
 	      /* Reset all stream history.  Stale FIR state at the next start creates
 	         a transient even when the ring buffer itself is cleared. */
-	      HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, RESET);
-	      HAL_GPIO_WritePin(Amp_SHDN_GPIO_Port, Amp_SHDN_Pin, RESET);
+	      HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, GPIO_PIN_RESET);
+	      HAL_GPIO_WritePin(Amp_SHDN_GPIO_Port, Amp_SHDN_Pin, GPIO_PIN_RESET);
 	      memset(ringbuf, 0, sizeof(int16_t) * RING_SAMPLES);
 	      memset(fir_state_L, 0, sizeof(fir_state_L));
 	      memset(fir_state_R, 0, sizeof(fir_state_R));
@@ -240,18 +240,18 @@ static int8_t AUDIO_AudioCmd_FS(uint8_t* pbuf, uint32_t size, uint8_t cmd)
 	      read_pos = 0U;
 	      audio_started = 0U;
 
-	      HAL_GPIO_WritePin(LED_B_GPIO_Port, LED_B_Pin, SET);
-	      HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, RESET);
+	      HAL_GPIO_WritePin(LED_B_GPIO_Port, LED_B_Pin, GPIO_PIN_SET);
+	      HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, GPIO_PIN_RESET);
 	      break;
 
 	    case AUDIO_CMD_STOP:
 	      // 1. 即座にハードウェアミュート（ノイズ遮断）
-	      HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, RESET);
-	      HAL_GPIO_WritePin(Amp_SHDN_GPIO_Port, Amp_SHDN_Pin, RESET);
+	      HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, GPIO_PIN_RESET);
+	      HAL_GPIO_WritePin(Amp_SHDN_GPIO_Port, Amp_SHDN_Pin, GPIO_PIN_RESET);
 
 	      // 2. 再生中LEDを消灯
-	      HAL_GPIO_WritePin(LED_B_GPIO_Port, LED_B_Pin, RESET);
-	      HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, SET);
+	      HAL_GPIO_WritePin(LED_B_GPIO_Port, LED_B_Pin, GPIO_PIN_RESET);
+	      HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, GPIO_PIN_SET);
 
 	      // 3. バッファに残ったゴミデータを消去
 	      memset(ringbuf, 0, sizeof(int16_t) * RING_SAMPLES);
@@ -290,11 +290,11 @@ static int8_t AUDIO_MuteCtl_FS(uint8_t cmd)
   /* USER CODE BEGIN 4 */
   if (cmd != 0U)
   {
-    HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, RESET);
+    HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, GPIO_PIN_RESET);
   }
   else if (audio_started != 0U)
   {
-    HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, SET);
+    HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, GPIO_PIN_SET);
   }
   return (USBD_OK);
   /* USER CODE END 4 */
@@ -311,6 +311,8 @@ static int8_t AUDIO_PeriodicTC_FS(uint8_t *pbuf, uint32_t size, uint8_t cmd)
   uint32_t wp;
   uint32_t used;
   uint32_t sample_count;
+
+  UNUSED(cmd);
 
   /* UAC1 stereo/16-bit packets always contain complete 4-byte frames. */
   if ((pbuf == NULL) || ((size & 3U) != 0U))
