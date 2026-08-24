@@ -67,13 +67,14 @@ void Error_Handler(void);
 
 /* USER CODE BEGIN Private defines */
 #define AUDIO_SAMPLES 512        // SAI書き込み量
-#define RING_SAMPLES  8192       // リングバッファサイズ
+#define RING_SAMPLES  8192       // リングバッファサイズ（2のべき乗）
+#define AUDIO_PREROLL_SAMPLES (RING_SAMPLES / 2U)
 
 extern __attribute__((aligned(4))) int32_t audio_buf[AUDIO_SAMPLES]; //DMA用
 extern __attribute__((aligned(4))) int16_t ringbuf[RING_SAMPLES]; //リングバッファ
 extern volatile uint32_t write_pos;
 extern volatile uint32_t read_pos;
-extern uint8_t audio_started;
+extern volatile uint8_t audio_started;
 
 
 /* USER CODE END Private defines */
