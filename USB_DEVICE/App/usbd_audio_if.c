@@ -74,6 +74,7 @@ float32_t float_out_L[BLOCK_SIZE * UPSAMPLE_FACTOR];
 float32_t float_out_R[BLOCK_SIZE * UPSAMPLE_FACTOR];
 
 extern int16_t ringbuf[];	//リングバッファ
+volatile uint8_t usb_audio_muted = 0U;
 extern volatile uint32_t write_pos;	//現在書き込み量
 /* USER CODE END PV */
 
@@ -288,7 +289,9 @@ static int8_t AUDIO_VolumeCtl_FS(uint8_t vol)
 static int8_t AUDIO_MuteCtl_FS(uint8_t cmd)
 {
   /* USER CODE BEGIN 4 */
-  if (cmd != 0U)
+  usb_audio_muted = (cmd != 0U) ? 1U : 0U;
+
+  if (usb_audio_muted != 0U)
   {
     HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, GPIO_PIN_RESET);
   }
