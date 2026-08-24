@@ -75,6 +75,7 @@ extern __attribute__((aligned(4))) int16_t ringbuf[RING_SAMPLES]; //リングバ
 extern volatile uint32_t write_pos;
 extern volatile uint32_t read_pos;
 extern volatile uint8_t audio_started;
+extern volatile uint8_t usb_audio_muted;
 
 
 /* USER CODE END Private defines */
