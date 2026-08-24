@@ -139,8 +139,8 @@ void FillFromRing(int32_t *dst, uint32_t samples)
     {
       audio_started = 1U;
       audio_gain_q15 = 0U;
-      HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, SET);
-      HAL_GPIO_WritePin(Amp_SHDN_GPIO_Port, Amp_SHDN_Pin, SET);
+      HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, GPIO_PIN_SET);
+      HAL_GPIO_WritePin(Amp_SHDN_GPIO_Port, Amp_SHDN_Pin, GPIO_PIN_SET);
     }
 
     /* Short de-zipper fade after start/recovery. */
@@ -227,8 +227,8 @@ int main(void)
 
   /* Keep the analog path muted until USB has provided a complete pre-roll.
      FillFromRing() enables it immediately before the click-free fade-in. */
-  HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, RESET);
-  HAL_GPIO_WritePin(Amp_SHDN_GPIO_Port, Amp_SHDN_Pin, RESET);
+  HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(Amp_SHDN_GPIO_Port, Amp_SHDN_Pin, GPIO_PIN_RESET);
   /* USER CODE END 2 */
 
   /* Infinite loop */
