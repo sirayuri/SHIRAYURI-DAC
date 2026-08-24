@@ -139,7 +139,10 @@ void FillFromRing(int32_t *dst, uint32_t samples)
     {
       audio_started = 1U;
       audio_gain_q15 = 0U;
-      HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, GPIO_PIN_SET);
+      if (usb_audio_muted == 0U)
+      {
+        HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, GPIO_PIN_SET);
+      }
       HAL_GPIO_WritePin(Amp_SHDN_GPIO_Port, Amp_SHDN_Pin, GPIO_PIN_SET);
     }
 
