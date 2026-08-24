@@ -421,9 +421,6 @@ static uint8_t USBD_AUDIO_Init(USBD_HandleTypeDef *pdev, uint8_t cfgidx)
     return (uint8_t)USBD_FAIL;
   }
 
-  /* Prepare Out endpoint to receive 1st packet */
-  (void)USBD_LL_PrepareReceive(pdev, AUDIOOutEpAdd, usb_rx_temp_buffer, 200);
-
   return (uint8_t)USBD_OK;
 }
 
