@@ -56,6 +56,7 @@ volatile uint32_t read_pos = 0;
 volatile uint8_t audio_started = 0;
 volatile uint32_t audio_underrun_count = 0;
 volatile uint32_t audio_overrun_count = 0;
+volatile uint32_t audio_missing_packet_count = 0;
 uint8_t is_playing = 0;
 uint32_t silence_cnt = 0;
 
@@ -90,6 +91,21 @@ void AudioPipeline_Reset(void)
   audio_started = 0U;
   audio_underrun_count = 0U;
   audio_overrun_count = 0U;
+  audio_missing_packet_count = 0U;
+}
+
+uint32_t Audio_GetSaiDmaWordPosition(void)
+{
+  uint32_t remaining = __HAL_DMA_GET_COUNTER(&hdma_sai1_b);
+
+  if (remaining > AUDIO_SAMPLES)
+  {
+    return 0U;
+  }
+
+  /* AUDIO_SAMPLES is a power of two.  Returning a modulo position lets the
+     USB SOF handler measure the SAI rate without relying on HSI tolerance. */
+  return (AUDIO_SAMPLES - remaining) & (AUDIO_SAMPLES - 1U);
 }
 
 static int32_t ScaleSampleQ15(int32_t sample, uint32_t gain_q15)
@@ -167,7 +183,6 @@ void FillFromRing(int32_t *dst, uint32_t samples)
       {
         HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, GPIO_PIN_SET);
       }
-      HAL_GPIO_WritePin(Amp_SHDN_GPIO_Port, Amp_SHDN_Pin, GPIO_PIN_SET);
     }
 
     /* Short de-zipper fade after start/recovery. */

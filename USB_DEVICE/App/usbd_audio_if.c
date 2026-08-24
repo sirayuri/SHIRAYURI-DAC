@@ -34,6 +34,8 @@
 #define UPSAMPLE_FACTOR 2
 #define NUM_TAPS 64
 #define BLOCK_SIZE 64
+#define USB_AUDIO_NOMINAL_PACKET_FRAMES 48U
+#define USB_AUDIO_CONCEAL_STEP_Q15      683U
 /* Private macro -------------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
@@ -76,6 +78,9 @@ float32_t float_out_R[BLOCK_SIZE * UPSAMPLE_FACTOR];
 extern int16_t ringbuf[];	//リングバッファ
 volatile uint8_t usb_audio_muted = 0U;
 extern volatile uint32_t write_pos;	//現在書き込み量
+static int16_t usb_last_sample_l = 0;
+static int16_t usb_last_sample_r = 0;
+static uint8_t usb_fade_in_pending = 0U;
 /* USER CODE END PV */
 
 /** @addtogroup STM32_USB_OTG_DEVICE_LIBRARY
@@ -168,6 +173,8 @@ static int8_t AUDIO_PeriodicTC_FS(uint8_t *pbuf, uint32_t size, uint8_t cmd);
 static int8_t AUDIO_GetState_FS(void);
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_DECLARATION */
+static int16_t AUDIO_DecodeS16(const uint8_t *p);
+static int16_t AUDIO_ScaleS16Q15(int16_t sample, uint32_t gain_q15);
 
 /* USER CODE END PRIVATE_FUNCTIONS_DECLARATION */
 
@@ -233,10 +240,15 @@ static int8_t AUDIO_AudioCmd_FS(uint8_t* pbuf, uint32_t size, uint8_t cmd)
 	      /* Reset all stream history.  Stale FIR state at the next start creates
 	         a transient even when the ring buffer itself is cleared. */
 	      HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, GPIO_PIN_RESET);
-	      HAL_GPIO_WritePin(Amp_SHDN_GPIO_Port, Amp_SHDN_Pin, GPIO_PIN_RESET);
+	      /* Power the amplifier while the DAC remains muted.  The 42 ms USB
+	         pre-roll then doubles as analog settling time before XSMT release. */
+	      HAL_GPIO_WritePin(Amp_SHDN_GPIO_Port, Amp_SHDN_Pin, GPIO_PIN_SET);
 	      memset(ringbuf, 0, sizeof(int16_t) * RING_SAMPLES);
 	      memset(fir_state_L, 0, sizeof(fir_state_L));
 	      memset(fir_state_R, 0, sizeof(fir_state_R));
+	      usb_last_sample_l = 0;
+	      usb_last_sample_r = 0;
+	      usb_fade_in_pending = 0U;
 	      write_pos = 0U;
 	      read_pos = 0U;
 	      AudioPipeline_Reset();
@@ -256,6 +268,9 @@ static int8_t AUDIO_AudioCmd_FS(uint8_t* pbuf, uint32_t size, uint8_t cmd)
 
 	      // 3. バッファに残ったゴミデータを消去
 	      memset(ringbuf, 0, sizeof(int16_t) * RING_SAMPLES);
+	      usb_last_sample_l = 0;
+	      usb_last_sample_r = 0;
+	      usb_fade_in_pending = 0U;
 	      write_pos = 0;
 	      read_pos = 0U;
 	      AudioPipeline_Reset();
@@ -314,11 +329,14 @@ static int8_t AUDIO_PeriodicTC_FS(uint8_t *pbuf, uint32_t size, uint8_t cmd)
   uint32_t wp;
   uint32_t used;
   uint32_t sample_count;
+  uint32_t fade_gain_q15 = 0U;
+  const uint8_t fading_in = usb_fade_in_pending;
 
   UNUSED(cmd);
 
   /* UAC1 stereo/16-bit packets always contain complete 4-byte frames. */
-  if ((pbuf == NULL) || ((size & 3U) != 0U))
+  if ((pbuf == NULL) || (size == 0U) || (size > 200U) ||
+      ((size & 3U) != 0U))
   {
     return (USBD_FAIL);
   }
@@ -338,12 +356,29 @@ static int8_t AUDIO_PeriodicTC_FS(uint8_t *pbuf, uint32_t size, uint8_t cmd)
 
   for (uint32_t i = 0U; i < size; i += 4U)
   {
-    ringbuf[wp & (RING_SAMPLES - 1U)] =
-        (int16_t)((uint16_t)pbuf[i] | ((uint16_t)pbuf[i + 1U] << 8));
+    int16_t sample_l = AUDIO_DecodeS16(&pbuf[i]);
+    int16_t sample_r = AUDIO_DecodeS16(&pbuf[i + 2U]);
+
+    if (usb_fade_in_pending != 0U)
+    {
+      uint32_t next_gain = fade_gain_q15 + USB_AUDIO_CONCEAL_STEP_Q15;
+      fade_gain_q15 = (next_gain > 32767U) ? 32767U : next_gain;
+      sample_l = AUDIO_ScaleS16Q15(sample_l, fade_gain_q15);
+      sample_r = AUDIO_ScaleS16Q15(sample_r, fade_gain_q15);
+    }
+
+    ringbuf[wp & (RING_SAMPLES - 1U)] = sample_l;
     wp++;
-    ringbuf[wp & (RING_SAMPLES - 1U)] =
-        (int16_t)((uint16_t)pbuf[i + 2U] | ((uint16_t)pbuf[i + 3U] << 8));
+    ringbuf[wp & (RING_SAMPLES - 1U)] = sample_r;
     wp++;
+
+    usb_last_sample_l = sample_l;
+    usb_last_sample_r = sample_r;
+  }
+
+  if (fading_in != 0U)
+  {
+    usb_fade_in_pending = 0U;
   }
 
   /* Commit once, after the complete packet is visible to the DMA consumer. */
@@ -351,6 +386,43 @@ static int8_t AUDIO_PeriodicTC_FS(uint8_t *pbuf, uint32_t size, uint8_t cmd)
   write_pos = wp;
   return (USBD_OK);
   /* USER CODE END 5 */
+}
+
+void AUDIO_ConcealMissingPacket_FS(void)
+{
+  const uint32_t sample_count = USB_AUDIO_NOMINAL_PACKET_FRAMES * 2U;
+  uint32_t wp = write_pos;
+  uint32_t used = wp - read_pos;
+  uint32_t gain_q15 = 32767U;
+
+  audio_missing_packet_count++;
+
+  if ((used > RING_SAMPLES) || (sample_count > (RING_SAMPLES - used)))
+  {
+    audio_overrun_count++;
+    return;
+  }
+
+  /* ISO OUT has no retransmission.  Replace a missing 1 ms packet with a
+     click-free ramp to zero, then fade the next real packet back in. */
+  for (uint32_t frame = 0U; frame < USB_AUDIO_NOMINAL_PACKET_FRAMES; frame++)
+  {
+    ringbuf[wp & (RING_SAMPLES - 1U)] =
+        AUDIO_ScaleS16Q15(usb_last_sample_l, gain_q15);
+    wp++;
+    ringbuf[wp & (RING_SAMPLES - 1U)] =
+        AUDIO_ScaleS16Q15(usb_last_sample_r, gain_q15);
+    wp++;
+
+    gain_q15 = (gain_q15 > USB_AUDIO_CONCEAL_STEP_Q15) ?
+               (gain_q15 - USB_AUDIO_CONCEAL_STEP_Q15) : 0U;
+  }
+
+  usb_last_sample_l = 0;
+  usb_last_sample_r = 0;
+  usb_fade_in_pending = 1U;
+  __DMB();
+  write_pos = wp;
 }
 
 /**
@@ -387,6 +459,16 @@ void HalfTransfer_CallBack_FS(void)
 }
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_IMPLEMENTATION */
+static int16_t AUDIO_DecodeS16(const uint8_t *p)
+{
+  return (int16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
+}
+
+static int16_t AUDIO_ScaleS16Q15(int16_t sample, uint32_t gain_q15)
+{
+  return (int16_t)(((int32_t)sample * (int32_t)gain_q15) >> 15);
+}
+
 void DSP_Process_Upsample(int16_t *pIn_48k, int32_t *pOut_96k_32)
 {
 	for (int i = 0; i < BLOCK_SIZE; i++) {

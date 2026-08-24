@@ -62,6 +62,7 @@ EndBSPDependencies */
 /* Includes ------------------------------------------------------------------*/
 #include "usbd_audio.h"
 #include "usbd_ctlreq.h"
+#include "usbd_audio_if.h"
 #include "main.h"
 
 /** @addtogroup STM32_USB_DEVICE_LIBRARY
@@ -85,10 +86,23 @@ EndBSPDependencies */
 /** @defgroup USBD_AUDIO_Private_Defines
   * @{
   */
-uint8_t feedback_data[3] = {0x00, 0x00, 0x0C};
+#define AUDIO_FEEDBACK_NOMINAL_Q14       0x000BFF6EU
+#define AUDIO_FEEDBACK_MIN_Q14           0x000B8000U
+#define AUDIO_FEEDBACK_MAX_Q14           0x000C8000U
+#define AUDIO_FEEDBACK_MEASURE_SOF       256U
+#define AUDIO_SAI_WORDS_PER_INPUT_FRAME  4U
+#define AUDIO_FEEDBACK_TRIM_LIMIT_Q14    1024
+
+uint8_t feedback_data[3] = {0x6EU, 0xFFU, 0x0BU};
 uint8_t usb_rx_temp_buffer[200];
-static int32_t ema_stored_x256 = (RING_SAMPLES / 2) * 256; // RING_SAMPLES/2 を256倍精度で保持
-static int32_t integral_error = 0;           // 積分項
+static int32_t ema_stored_frames_x256 = (RING_SAMPLES / 4) * 256;
+static uint32_t measured_feedback_q14 = AUDIO_FEEDBACK_NOMINAL_Q14;
+static uint32_t feedback_last_dma_pos = 0U;
+static uint32_t feedback_accumulated_words = 0U;
+static uint32_t feedback_measure_sofs = 0U;
+static uint32_t audio_sof_sequence = 0U;
+static uint32_t audio_last_packet_sof = 0U;
+static uint8_t audio_received_packet = 0U;
 /**
   * @}
   */
@@ -134,6 +148,9 @@ static uint8_t USBD_AUDIO_IsoOutIncomplete(USBD_HandleTypeDef *pdev, uint8_t epn
 static void AUDIO_REQ_GetCurrent(USBD_HandleTypeDef *pdev, USBD_SetupReqTypedef *req);
 static void AUDIO_REQ_SetCurrent(USBD_HandleTypeDef *pdev, USBD_SetupReqTypedef *req);
 static void *USBD_AUDIO_GetAudioHeaderDesc(uint8_t *pConfDesc);
+static void AUDIO_SetFeedbackQ14(uint32_t value_q14);
+static void AUDIO_ResetFeedbackEstimator(void);
+static void AUDIO_UpdateFeedbackRate(void);
 
 /**
   * @}
@@ -412,6 +429,10 @@ static uint8_t USBD_AUDIO_Init(USBD_HandleTypeDef *pdev, uint8_t cfgidx)
   haudio->wr_ptr = 0U;
   haudio->rd_ptr = 0U;
   haudio->rd_enable = 0U;
+  audio_sof_sequence = 0U;
+  audio_last_packet_sof = 0U;
+  audio_received_packet = 0U;
+  AUDIO_ResetFeedbackEstimator();
 
   /* Initialize the Audio output Hardware layer */
   if (((USBD_AUDIO_ItfTypeDef *)pdev->pUserData[pdev->classId])->Init(USBD_AUDIO_FREQ,
@@ -564,16 +585,17 @@ static uint8_t USBD_AUDIO_Setup(USBD_HandleTypeDef *pdev,
                 {
                   ((USBD_AUDIO_ItfTypeDef *)pdev->pUserData[pdev->classId])->
                       AudioCmd(NULL, 0U, AUDIO_CMD_STOP);
-                  integral_error = 0;
-                  ema_stored_x256 = (RING_SAMPLES / 2) * 256;
+                  audio_sof_sequence = 0U;
+                  audio_last_packet_sof = 0U;
+                  audio_received_packet = 0U;
+                  AUDIO_ResetFeedbackEstimator();
                 }
                 else
                 {
-                  feedback_data[0] = 0x00U;
-                  feedback_data[1] = 0x00U;
-                  feedback_data[2] = 0x0CU;
-                  integral_error = 0;
-                  ema_stored_x256 = (RING_SAMPLES / 2) * 256;
+                  audio_sof_sequence = 0U;
+                  audio_last_packet_sof = 0U;
+                  audio_received_packet = 0U;
+                  AUDIO_ResetFeedbackEstimator();
 
                   ((USBD_AUDIO_ItfTypeDef *)pdev->pUserData[pdev->classId])->
                       AudioCmd(NULL, 0U, AUDIO_CMD_PLAY);
@@ -694,6 +716,50 @@ static uint8_t USBD_AUDIO_EP0_TxReady(USBD_HandleTypeDef *pdev)
   /* Only OUT control data are processed */
   return (uint8_t)USBD_OK;
 }
+
+static void AUDIO_SetFeedbackQ14(uint32_t value_q14)
+{
+  feedback_data[0] = (uint8_t)(value_q14 & 0xFFU);
+  feedback_data[1] = (uint8_t)((value_q14 >> 8) & 0xFFU);
+  feedback_data[2] = (uint8_t)((value_q14 >> 16) & 0xFFU);
+}
+
+static void AUDIO_ResetFeedbackEstimator(void)
+{
+  measured_feedback_q14 = AUDIO_FEEDBACK_NOMINAL_Q14;
+  feedback_last_dma_pos = Audio_GetSaiDmaWordPosition();
+  feedback_accumulated_words = 0U;
+  feedback_measure_sofs = 0U;
+  ema_stored_frames_x256 = (RING_SAMPLES / 4) * 256;
+  AUDIO_SetFeedbackQ14(measured_feedback_q14);
+}
+
+static void AUDIO_UpdateFeedbackRate(void)
+{
+  uint32_t dma_pos = Audio_GetSaiDmaWordPosition();
+  uint32_t delta = (dma_pos - feedback_last_dma_pos) & (AUDIO_SAMPLES - 1U);
+
+  feedback_last_dma_pos = dma_pos;
+  feedback_accumulated_words += delta;
+  feedback_measure_sofs++;
+
+  if (feedback_measure_sofs >= AUDIO_FEEDBACK_MEASURE_SOF)
+  {
+    uint32_t denominator = AUDIO_SAI_WORDS_PER_INPUT_FRAME *
+                           feedback_measure_sofs;
+    uint32_t measured = (feedback_accumulated_words << 14) / denominator;
+
+    if ((measured >= AUDIO_FEEDBACK_MIN_Q14) &&
+        (measured <= AUDIO_FEEDBACK_MAX_Q14))
+    {
+      measured_feedback_q14 = measured;
+    }
+
+    feedback_accumulated_words = 0U;
+    feedback_measure_sofs = 0U;
+  }
+}
+
 /**
   * @brief  USBD_AUDIO_SOF
   *         handle SOF event
@@ -704,42 +770,72 @@ static uint8_t USBD_AUDIO_SOF(USBD_HandleTypeDef *pdev)
 {
   USBD_AUDIO_HandleTypeDef *haudio =
       (USBD_AUDIO_HandleTypeDef *)pdev->pClassDataCmsit[pdev->classId];
-  uint32_t stored = write_pos - read_pos;
+  uint32_t stored;
+  uint32_t stored_frames;
+
+  if ((haudio != NULL) && (haudio->alt_setting == 1U))
+  {
+    /* One OUT packet is expected per Full-Speed frame while alt 1 is active.
+       ISO has no retry, so conceal a missing packet instead of leaving a hard
+       discontinuity in the ring buffer. */
+    if ((audio_received_packet != 0U) &&
+        (audio_last_packet_sof != audio_sof_sequence))
+    {
+      AUDIO_ConcealMissingPacket_FS();
+      audio_last_packet_sof = audio_sof_sequence;
+    }
+    audio_sof_sequence++;
+
+    /* Measure the real HSI/PLLSAI/SAI rate against USB SOF.  This removes the
+       several-second PI hunting caused by assuming an exact 96 kHz SAI clock. */
+    AUDIO_UpdateFeedbackRate();
+  }
+
+  stored = write_pos - read_pos;
 
   if (stored > RING_SAMPLES)
   {
     stored = 0U;
   }
+  stored_frames = stored / 2U;
 
   if ((haudio == NULL) || (haudio->alt_setting != 1U) ||
       (audio_started == 0U))
   {
-    feedback_data[0] = 0x00U;
-    feedback_data[1] = 0x00U;
-    feedback_data[2] = 0x0CU;
-    integral_error = 0;
-    ema_stored_x256 = (int32_t)stored * 256;
+    AUDIO_SetFeedbackQ14(measured_feedback_q14);
+    ema_stored_frames_x256 = (int32_t)stored_frames * 256;
     return (uint8_t)USBD_OK;
   }
 
-  ema_stored_x256 += (((int32_t)stored * 256) - ema_stored_x256) / 32;
+  ema_stored_frames_x256 += (((int32_t)stored_frames * 256) -
+                              ema_stored_frames_x256) / 64;
 
   {
-    int32_t error = (ema_stored_x256 / 256) - (RING_SAMPLES / 2);
-    int32_t p_term = error * 3;
+    int32_t error_frames = (ema_stored_frames_x256 / 256) -
+                           (RING_SAMPLES / 4);
+    int32_t trim_q14 = error_frames;
     int32_t feedback_val;
 
-    integral_error += error;
-    if (integral_error > 50000) integral_error = 50000;
-    if (integral_error < -50000) integral_error = -50000;
+    if (trim_q14 > AUDIO_FEEDBACK_TRIM_LIMIT_Q14)
+    {
+      trim_q14 = AUDIO_FEEDBACK_TRIM_LIMIT_Q14;
+    }
+    if (trim_q14 < -AUDIO_FEEDBACK_TRIM_LIMIT_Q14)
+    {
+      trim_q14 = -AUDIO_FEEDBACK_TRIM_LIMIT_Q14;
+    }
 
-    feedback_val = 0x0C0000 - (p_term + (integral_error / 16));
-    if (feedback_val > 0x0C2000) feedback_val = 0x0C2000;
-    if (feedback_val < 0x0BE000) feedback_val = 0x0BE000;
+    feedback_val = (int32_t)measured_feedback_q14 - trim_q14;
+    if (feedback_val > (int32_t)AUDIO_FEEDBACK_MAX_Q14)
+    {
+      feedback_val = (int32_t)AUDIO_FEEDBACK_MAX_Q14;
+    }
+    if (feedback_val < (int32_t)AUDIO_FEEDBACK_MIN_Q14)
+    {
+      feedback_val = (int32_t)AUDIO_FEEDBACK_MIN_Q14;
+    }
 
-    feedback_data[0] = (uint8_t)(feedback_val & 0xFF);
-    feedback_data[1] = (uint8_t)((feedback_val >> 8) & 0xFF);
-    feedback_data[2] = (uint8_t)((feedback_val >> 16) & 0xFF);
+    AUDIO_SetFeedbackQ14((uint32_t)feedback_val);
   }
 
   return (uint8_t)USBD_OK;
@@ -919,6 +1015,13 @@ static uint8_t USBD_AUDIO_DataOut(USBD_HandleTypeDef *pdev, uint8_t epnum)
 	  {
 	    /* 1. 今回受信した実際のサイズ（192 または 196）を取得 */
 	    PacketSize = (uint16_t)USBD_LL_GetRxDataSize(pdev, epnum);
+
+	    if ((PacketSize != 0U) && (PacketSize <= sizeof(usb_rx_temp_buffer)) &&
+	        ((PacketSize & 3U) == 0U))
+	    {
+	      audio_last_packet_sof = audio_sof_sequence;
+	      audio_received_packet = 1U;
+	    }
 
 	    /* 2. STのバッファは一切経由せず、Temp bufferのデータをそのまま PeriodicTC(ringbuf) へ叩き込む */
 	    ((USBD_AUDIO_ItfTypeDef *)pdev->pUserData[pdev->classId])->PeriodicTC(usb_rx_temp_buffer, PacketSize, AUDIO_OUT_TC);
