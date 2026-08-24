@@ -2251,6 +2251,18 @@ PCD_StateTypeDef HAL_PCD_GetState(PCD_HandleTypeDef const *hpcd)
   */
 
 /* Private functions ---------------------------------------------------------*/
+/* ES0318 section 2.22.4: on STM32L431/2/3/442/3 the USB CTR_RX interrupt can
+   precede completion of the final PMA write. At 80 MHz this loop is safely
+   longer than the required 800 ns Full-Speed delay, including at -Ofast. */
+static void PCD_DelayBeforePMARead(void)
+{
+  for (volatile uint32_t wait = 0U; wait < 20U; wait++)
+  {
+    __NOP();
+  }
+  __DMB();
+}
+
 /** @addtogroup PCD_Private_Functions
   * @{
   */
@@ -2459,6 +2471,8 @@ static HAL_StatusTypeDef PCD_EP_ISR_Handler(PCD_HandleTypeDef *hpcd)
 
         if ((wEPVal & USB_EP_SETUP) != 0U)
         {
+          PCD_DelayBeforePMARead();
+
           /* Get SETUP Packet */
           ep->xfer_count = PCD_GET_EP_RX_CNT(hpcd->Instance, ep->num);
 
@@ -2478,6 +2492,7 @@ static HAL_StatusTypeDef PCD_EP_ISR_Handler(PCD_HandleTypeDef *hpcd)
         else if ((wEPVal & USB_EP_CTR_RX) != 0U)
         {
           PCD_CLEAR_RX_EP_CTR(hpcd->Instance, PCD_ENDP0);
+          PCD_DelayBeforePMARead();
 
           /* Get Control Data OUT Packet */
           ep->xfer_count = PCD_GET_EP_RX_CNT(hpcd->Instance, ep->num);
@@ -2517,6 +2532,7 @@ static HAL_StatusTypeDef PCD_EP_ISR_Handler(PCD_HandleTypeDef *hpcd)
       {
         /* clear int flag */
         PCD_CLEAR_RX_EP_CTR(hpcd->Instance, epindex);
+        PCD_DelayBeforePMARead();
         ep = &hpcd->OUT_ep[epindex];
 
         /* OUT Single Buffering */

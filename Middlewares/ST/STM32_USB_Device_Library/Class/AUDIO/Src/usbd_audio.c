@@ -332,7 +332,7 @@ __ALIGN_BEGIN static uint8_t USBD_AUDIO_CfgDesc[USB_AUDIO_CONFIG_DESC_SIZ] __ALI
   0x11,                                 /* bmAttributes: Isochronous, None, Feedback */
   0x03, 0x00,                           /* wMaxPacketSize: 3 bytes (フィードバック値は3バイト固定) */
   0x01,                                 /* bInterval: 1ms */
-  0x00,                                 /* bRefresh: 0x00じゃないと規約違反らしい */
+  0x04,                                 /* bRefresh: new feedback every 2^4 = 16ms */
   0x00,                                 /* bSynchAddress */
 } ;
 

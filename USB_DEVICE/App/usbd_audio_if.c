@@ -239,7 +239,7 @@ static int8_t AUDIO_AudioCmd_FS(uint8_t* pbuf, uint32_t size, uint8_t cmd)
 	      memset(fir_state_R, 0, sizeof(fir_state_R));
 	      write_pos = 0U;
 	      read_pos = 0U;
-	      audio_started = 0U;
+	      AudioPipeline_Reset();
 
 	      HAL_GPIO_WritePin(LED_B_GPIO_Port, LED_B_Pin, GPIO_PIN_SET);
 	      HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, GPIO_PIN_RESET);
@@ -258,7 +258,7 @@ static int8_t AUDIO_AudioCmd_FS(uint8_t* pbuf, uint32_t size, uint8_t cmd)
 	      memset(ringbuf, 0, sizeof(int16_t) * RING_SAMPLES);
 	      write_pos = 0;
 	      read_pos = 0U;
-	      audio_started = 0U;
+	      AudioPipeline_Reset();
 	      break;
 	  }
 
@@ -332,6 +332,7 @@ static int8_t AUDIO_PeriodicTC_FS(uint8_t *pbuf, uint32_t size, uint8_t cmd)
      progress; explicit feedback will pull the host rate back down. */
   if ((used > RING_SAMPLES) || (sample_count > (RING_SAMPLES - used)))
   {
+    audio_overrun_count++;
     return (USBD_BUSY);
   }
 
