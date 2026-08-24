@@ -206,7 +206,7 @@ __ALIGN_BEGIN static uint8_t USBD_AUDIO_CfgDesc[USB_AUDIO_CONFIG_DESC_SIZ] __ALI
   AUDIO_CONTROL_HEADER,                 /* bDescriptorSubtype */
   0x00,          /* 1.00 */             /* bcdADC */
   0x01,
-  0x27,                                 /* wTotalLength */
+  0x28,                                 /* wTotalLength: stereo AC descriptors */
   0x00,
   0x01,                                 /* bInCollection */
   0x01,                                 /* baInterfaceNr */
@@ -220,22 +220,23 @@ __ALIGN_BEGIN static uint8_t USBD_AUDIO_CfgDesc[USB_AUDIO_CONFIG_DESC_SIZ] __ALI
   0x01,                                 /* wTerminalType AUDIO_TERMINAL_USB_STREAMING   0x0101 */
   0x01,
   0x00,                                 /* bAssocTerminal */
-  0x01,                                 /* bNrChannels */
-  0x00,                                 /* wChannelConfig 0x0000  Mono */
+  0x02,                                 /* bNrChannels: stereo */
+  0x03,                                 /* wChannelConfig: Left Front | Right Front */
   0x00,
   0x00,                                 /* iChannelNames */
   0x00,                                 /* iTerminal */
   /* 12 byte*/
 
   /* USB Speaker Audio Feature Unit Descriptor */
-  0x09,                                 /* bLength */
+  0x0A,                                 /* bLength: master + two channel controls */
   AUDIO_INTERFACE_DESCRIPTOR_TYPE,      /* bDescriptorType */
   AUDIO_CONTROL_FEATURE_UNIT,           /* bDescriptorSubtype */
   AUDIO_OUT_STREAMING_CTRL,             /* bUnitID */
   0x01,                                 /* bSourceID */
   0x01,                                 /* bControlSize */
-  AUDIO_CONTROL_MUTE,                   /* bmaControls(0) */
-  0,                                    /* bmaControls(1) */
+  AUDIO_CONTROL_MUTE,                   /* bmaControls(0): master mute */
+  0x00,                                 /* bmaControls(1): left */
+  0x00,                                 /* bmaControls(2): right */
   0x00,                                 /* iTerminal */
   /* 09 byte */
 
@@ -405,7 +406,6 @@ static uint8_t USBD_AUDIO_Init(USBD_HandleTypeDef *pdev, uint8_t cfgidx)
   //★user add
   (void)USBD_LL_OpenEP(pdev, AUDIO_IN_EP, USBD_EP_TYPE_ISOC, 3);
   pdev->ep_in[AUDIO_IN_EP & 0xFU].is_used = 1U;
-  USBD_LL_Transmit(pdev, AUDIO_IN_EP, feedback_data, 3);
 
   haudio->alt_setting = 0U;
   haudio->offset = AUDIO_OFFSET_UNKNOWN;
@@ -554,24 +554,41 @@ static uint8_t USBD_AUDIO_Setup(USBD_HandleTypeDef *pdev,
         case USB_REQ_SET_INTERFACE:
           if (pdev->dev_state == USBD_STATE_CONFIGURED)
           {
-            if ((uint8_t)(req->wValue) <= USBD_MAX_NUM_INTERFACES)
-            {
-              haudio->alt_setting = (uint8_t)(req->wValue);
+            uint8_t new_alt = (uint8_t)req->wValue;
 
-              if (haudio->alt_setting == 0U)
-		      {
-				  /* ゼロ帯域設定 ＝ 停止または一時停止 */
-            	((USBD_AUDIO_ItfTypeDef *)pdev->pUserData[pdev->classId])->AudioCmd(NULL, 0, AUDIO_CMD_STOP);
-		      }
-              else if (haudio->alt_setting == 1U)
+            /* UAC1 has exactly alt 0/1 on AudioStreaming interface 1. */
+            if (((uint8_t)req->wIndex == 0x01U) && (new_alt <= 1U))
+            {
+              if (new_alt != haudio->alt_setting)
               {
-            	  /* 帯域確保 ＝ 再生開始 */
-            	((USBD_AUDIO_ItfTypeDef *)pdev->pUserData[pdev->classId])->AudioCmd(NULL, 0, AUDIO_CMD_PLAY);
+                haudio->alt_setting = new_alt;
+
+                if (new_alt == 0U)
+                {
+                  ((USBD_AUDIO_ItfTypeDef *)pdev->pUserData[pdev->classId])->
+                      AudioCmd(NULL, 0U, AUDIO_CMD_STOP);
+                  integral_error = 0;
+                  ema_stored_x256 = (RING_SAMPLES / 2) * 256;
+                }
+                else
+                {
+                  feedback_data[0] = 0x00U;
+                  feedback_data[1] = 0x00U;
+                  feedback_data[2] = 0x0CU;
+                  integral_error = 0;
+                  ema_stored_x256 = (RING_SAMPLES / 2) * 256;
+
+                  ((USBD_AUDIO_ItfTypeDef *)pdev->pUserData[pdev->classId])->
+                      AudioCmd(NULL, 0U, AUDIO_CMD_PLAY);
+                  (void)USBD_LL_PrepareReceive(pdev, AUDIOOutEpAdd,
+                                               usb_rx_temp_buffer,
+                                               sizeof(usb_rx_temp_buffer));
+                  (void)USBD_LL_Transmit(pdev, AUDIO_IN_EP, feedback_data, 3U);
+                }
               }
             }
             else
             {
-              /* Call the error management function (command will be NAKed */
               USBD_CtlError(pdev, req);
               ret = USBD_FAIL;
             }
@@ -624,12 +641,17 @@ static uint8_t *USBD_AUDIO_GetCfgDesc(uint16_t *length)
   */
 static uint8_t USBD_AUDIO_DataIn(USBD_HandleTypeDef *pdev, uint8_t epnum)
 {
-	/* PCが前回の値を無事に受け取ったので、次回のフィードバック値を送信バッファにセットする */
-	  if (epnum == (AUDIO_IN_EP & 0x7F))
-	  {
-	    USBD_LL_Transmit(pdev, AUDIO_IN_EP, feedback_data, 3);
-	  }
-	  return (uint8_t)USBD_OK;
+  USBD_AUDIO_HandleTypeDef *haudio =
+      (USBD_AUDIO_HandleTypeDef *)pdev->pClassDataCmsit[pdev->classId];
+
+  if ((haudio != NULL) &&
+      (haudio->alt_setting == 1U) &&
+      (epnum == (AUDIO_IN_EP & 0x7FU)))
+  {
+    (void)USBD_LL_Transmit(pdev, AUDIO_IN_EP, feedback_data, 3U);
+  }
+
+  return (uint8_t)USBD_OK;
 }
 
 /**
@@ -683,38 +705,47 @@ static uint8_t USBD_AUDIO_EP0_TxReady(USBD_HandleTypeDef *pdev)
   */
 static uint8_t USBD_AUDIO_SOF(USBD_HandleTypeDef *pdev)
 {
-	uint32_t wp = write_pos;
-	uint32_t rp = read_pos;
-	uint32_t stored = (wp >= rp) ? (wp - rp) : (RING_SAMPLES - rp + wp);
+  USBD_AUDIO_HandleTypeDef *haudio =
+      (USBD_AUDIO_HandleTypeDef *)pdev->pClassDataCmsit[pdev->classId];
+  uint32_t stored = write_pos - read_pos;
 
-	// 1. 高精度ローパスフィルタ（256倍精度）
-	ema_stored_x256 += (((int32_t)stored * 256) - ema_stored_x256) / 32;
+  if (stored > RING_SAMPLES)
+  {
+    stored = 0U;
+  }
 
-	// 2. 誤差の計算
-	int32_t error = (ema_stored_x256 / 256) - (RING_SAMPLES / 2);
+  if ((haudio == NULL) || (haudio->alt_setting != 1U) ||
+      (audio_started == 0U))
+  {
+    feedback_data[0] = 0x00U;
+    feedback_data[1] = 0x00U;
+    feedback_data[2] = 0x0CU;
+    integral_error = 0;
+    ema_stored_x256 = (int32_t)stored * 256;
+    return (uint8_t)USBD_OK;
+  }
 
-	// 3. PI制御
-	int32_t P_term = error * 3;
+  ema_stored_x256 += (((int32_t)stored * 256) - ema_stored_x256) / 32;
 
-	integral_error += error;
-	if (integral_error > 50000) integral_error = 50000;
-	if (integral_error < -50000) integral_error = -50000;
-	int32_t I_term = integral_error / 16;
+  {
+    int32_t error = (ema_stored_x256 / 256) - (RING_SAMPLES / 2);
+    int32_t p_term = error * 3;
+    int32_t feedback_val;
 
-	// 4. フィードバック計算
-	int32_t feedback_base = 0x0C0000;
-	int32_t feedback_val = feedback_base - (P_term + I_term);
+    integral_error += error;
+    if (integral_error > 50000) integral_error = 50000;
+    if (integral_error < -50000) integral_error = -50000;
 
-	// 5. サチュレーション
-	if (feedback_val > 0x0C2000) feedback_val = 0x0C2000;
-	if (feedback_val < 0x0BE000) feedback_val = 0x0BE000;
+    feedback_val = 0x0C0000 - (p_term + (integral_error / 16));
+    if (feedback_val > 0x0C2000) feedback_val = 0x0C2000;
+    if (feedback_val < 0x0BE000) feedback_val = 0x0BE000;
 
-	// 6. パッキング
-	feedback_data[0] = (uint8_t)(feedback_val & 0xFF);
-	feedback_data[1] = (uint8_t)((feedback_val >> 8) & 0xFF);
-	feedback_data[2] = (uint8_t)((feedback_val >> 16) & 0xFF);
+    feedback_data[0] = (uint8_t)(feedback_val & 0xFF);
+    feedback_data[1] = (uint8_t)((feedback_val >> 8) & 0xFF);
+    feedback_data[2] = (uint8_t)((feedback_val >> 16) & 0xFF);
+  }
 
-	return (uint8_t)USBD_OK;
+  return (uint8_t)USBD_OK;
 }
 
 /**
