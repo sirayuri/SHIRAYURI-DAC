@@ -229,22 +229,24 @@ static int8_t AUDIO_AudioCmd_FS(uint8_t* pbuf, uint32_t size, uint8_t cmd)
 	switch(cmd)
 	  {
 	    case AUDIO_CMD_PLAY:
-	      // 1. バッファをリセット
+	      /* Reset all stream history.  Stale FIR state at the next start creates
+	         a transient even when the ring buffer itself is cleared. */
+	      HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, RESET);
+	      HAL_GPIO_WritePin(Amp_SHDN_GPIO_Port, Amp_SHDN_Pin, RESET);
 	      memset(ringbuf, 0, sizeof(int16_t) * RING_SAMPLES);
-	      write_pos = 0;
-	      read_pos = 0;
-	      audio_started = 0;
+	      memset(fir_state_L, 0, sizeof(fir_state_L));
+	      memset(fir_state_R, 0, sizeof(fir_state_R));
+	      write_pos = 0U;
+	      read_pos = 0U;
+	      audio_started = 0U;
 
-	      // 2. ミュート解除（アンプON）
-	      HAL_GPIO_WritePin(Amp_SHDN_GPIO_Port, Amp_SHDN_Pin, SET);
-
-	      // 3. 再生中LEDを点灯
 	      HAL_GPIO_WritePin(LED_B_GPIO_Port, LED_B_Pin, SET);
 	      HAL_GPIO_WritePin(LED_R_GPIO_Port, LED_R_Pin, RESET);
 	      break;
 
 	    case AUDIO_CMD_STOP:
 	      // 1. 即座にハードウェアミュート（ノイズ遮断）
+	      HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, RESET);
 	      HAL_GPIO_WritePin(Amp_SHDN_GPIO_Port, Amp_SHDN_Pin, RESET);
 
 	      // 2. 再生中LEDを消灯
@@ -254,7 +256,8 @@ static int8_t AUDIO_AudioCmd_FS(uint8_t* pbuf, uint32_t size, uint8_t cmd)
 	      // 3. バッファに残ったゴミデータを消去
 	      memset(ringbuf, 0, sizeof(int16_t) * RING_SAMPLES);
 	      write_pos = 0;
-	      read_pos = 0;
+	      read_pos = 0U;
+	      audio_started = 0U;
 	      break;
 	  }
 
@@ -285,7 +288,14 @@ static int8_t AUDIO_VolumeCtl_FS(uint8_t vol)
 static int8_t AUDIO_MuteCtl_FS(uint8_t cmd)
 {
   /* USER CODE BEGIN 4 */
-  UNUSED(cmd);
+  if (cmd != 0U)
+  {
+    HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, RESET);
+  }
+  else if (audio_started != 0U)
+  {
+    HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, SET);
+  }
   return (USBD_OK);
   /* USER CODE END 4 */
 }
@@ -298,22 +308,41 @@ static int8_t AUDIO_MuteCtl_FS(uint8_t cmd)
 static int8_t AUDIO_PeriodicTC_FS(uint8_t *pbuf, uint32_t size, uint8_t cmd)
 {
   /* USER CODE BEGIN 5 */
-  // sizeを必ず4の倍数で保つ
-  size &= ~3;
+  uint32_t wp;
+  uint32_t used;
+  uint32_t sample_count;
 
-  for(uint32_t i = 0; i < size; i += 4)
+  /* UAC1 stereo/16-bit packets always contain complete 4-byte frames. */
+  if ((pbuf == NULL) || ((size & 3U) != 0U))
   {
-	// リトルエンディアンで結合
-	int16_t l_sample = (int16_t)(pbuf[i] | (pbuf[i+1] << 8));
-	int16_t r_sample = (int16_t)(pbuf[i+2] | (pbuf[i+3] << 8));
-
-	//リングバッファに書き込み
-	ringbuf[write_pos++] = l_sample;
-	if(write_pos >= RING_SAMPLES) write_pos = 0;
-
-	ringbuf[write_pos++] = r_sample;
-	if(write_pos >= RING_SAMPLES) write_pos = 0;
+    return (USBD_FAIL);
   }
+
+  sample_count = size / sizeof(int16_t);
+  wp = write_pos;
+  used = wp - read_pos;
+
+  /* Never publish or overwrite a partial block.  If the host outruns us,
+     dropping one complete packet is safer than corrupting a DMA read in
+     progress; explicit feedback will pull the host rate back down. */
+  if ((used > RING_SAMPLES) || (sample_count > (RING_SAMPLES - used)))
+  {
+    return (USBD_BUSY);
+  }
+
+  for (uint32_t i = 0U; i < size; i += 4U)
+  {
+    ringbuf[wp & (RING_SAMPLES - 1U)] =
+        (int16_t)((uint16_t)pbuf[i] | ((uint16_t)pbuf[i + 1U] << 8));
+    wp++;
+    ringbuf[wp & (RING_SAMPLES - 1U)] =
+        (int16_t)((uint16_t)pbuf[i + 2U] | ((uint16_t)pbuf[i + 3U] << 8));
+    wp++;
+  }
+
+  /* Commit once, after the complete packet is visible to the DMA consumer. */
+  __DMB();
+  write_pos = wp;
   return (USBD_OK);
   /* USER CODE END 5 */
 }
