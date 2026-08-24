@@ -64,7 +64,7 @@ extern "C" {
 #define AUDIO_IN_EP                                   0x82U//FEEDBACK END POINT
 
 //#define USB_AUDIO_CONFIG_DESC_SIZ                     0x6DU
-#define USB_AUDIO_CONFIG_DESC_SIZ                     0x76U//★add 9 bytes
+#define USB_AUDIO_CONFIG_DESC_SIZ                     0x77U /* UAC1 stereo + feedback */
 #define AUDIO_INTERFACE_DESC_SIZE                     0x09U
 #define USB_AUDIO_DESC_SIZ                            0x09U
 #define AUDIO_STANDARD_ENDPOINT_DESC_SIZE             0x09U
