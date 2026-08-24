@@ -53,7 +53,7 @@ int32_t audio_buf[AUDIO_SAMPLES];	//DMAに書き込むよう
 int16_t ringbuf[RING_SAMPLES];	//リングバッファ
 volatile uint32_t write_pos = 0;
 volatile uint32_t read_pos = 0;
-uint8_t audio_started = 0;
+volatile uint8_t audio_started = 0;
 uint8_t is_playing = 0;
 uint32_t silence_cnt = 0;
 
@@ -71,46 +71,108 @@ static void MX_SAI1_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+#define AUDIO_FADE_STEP_Q15  64U
+
+static uint16_t audio_gain_q15 = 0U;
+static int32_t last_sample_l = 0;
+static int32_t last_sample_r = 0;
+
+static void FillRampToSilence(int32_t *dst, uint32_t samples)
+{
+  uint32_t frames = samples / 2U;
+
+  for (uint32_t i = 0U; i < frames; i++)
+  {
+    uint32_t remaining = frames - i - 1U;
+    dst[i * 2U] = (int32_t)(((int64_t)last_sample_l * remaining) / frames);
+    dst[i * 2U + 1U] = (int32_t)(((int64_t)last_sample_r * remaining) / frames);
+  }
+
+  last_sample_l = 0;
+  last_sample_r = 0;
+  audio_gain_q15 = 0U;
+  audio_started = 0U;
+}
+
 void FillFromRing(int32_t *dst, uint32_t samples)
 {
-  uint32_t req_48k_samples = samples / 2;
-
-  uint32_t wp = write_pos;
+  const uint32_t req_48k_samples = samples / 2U;
+  const uint32_t wp = write_pos;
   uint32_t rp = read_pos;
-  uint32_t stored = (wp >= rp) ? (wp - rp) : (RING_SAMPLES - rp + wp);
+  const uint32_t stored = wp - rp;
+
+  /* A corrupted/overrun state is recovered without reading overwritten data. */
+  if (stored > RING_SAMPLES)
+  {
+    read_pos = wp;
+    FillRampToSilence(dst, samples);
+    return;
+  }
+
+  /* Do not start from an almost-empty buffer.  The pre-roll absorbs Android
+     scheduler jitter and the USB/SAI clock-domain phase difference. */
+  if ((audio_started == 0U) && (stored < AUDIO_PREROLL_SAMPLES))
+  {
+    memset(dst, 0, samples * sizeof(int32_t));
+    return;
+  }
 
   if (stored >= req_48k_samples)
   {
-	// C言語のVLA(可変長配列)を避けるため、最大想定サイズで確保
-	int16_t temp_48k[AUDIO_SAMPLES / 2];
+    int16_t temp_48k[AUDIO_SAMPLES / 2U];
+    const uint8_t starting = (audio_started == 0U);
 
-	// 1. リングバッファから48kHzのデータを128要素(64ペア)抽出
-	for(uint32_t i = 0; i < req_48k_samples; i++)
-	{
-	  temp_48k[i] = ringbuf[read_pos];
-	  read_pos = (read_pos + 1) % RING_SAMPLES;
-	}
+    for (uint32_t i = 0U; i < req_48k_samples; i++)
+    {
+      temp_48k[i] = ringbuf[rp & (RING_SAMPLES - 1U)];
+      rp++;
+    }
 
-	// 2. DSPへ投入！ temp_48k(128要素) -> [FPU処理] -> dst(256要素)へ直接展開
-	DSP_Process_Upsample(temp_48k, dst);
+    /* Publish the consumer position only after the complete stereo block has
+       been copied.  This prevents USB from overwriting a half-read frame. */
+    __DMB();
+    read_pos = rp;
+
+    DSP_Process_Upsample(temp_48k, dst);
+
+    if (starting != 0U)
+    {
+      audio_started = 1U;
+      audio_gain_q15 = 0U;
+      HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, SET);
+      HAL_GPIO_WritePin(Amp_SHDN_GPIO_Port, Amp_SHDN_Pin, SET);
+    }
+
+    /* Short de-zipper fade after start/recovery. */
+    for (uint32_t i = 0U; i < samples; i += 2U)
+    {
+      uint32_t next_gain = audio_gain_q15 + AUDIO_FADE_STEP_Q15;
+      audio_gain_q15 = (uint16_t)((next_gain > 32767U) ? 32767U : next_gain);
+      dst[i] = (int32_t)(((int64_t)dst[i] * audio_gain_q15) / 32767);
+      dst[i + 1U] = (int32_t)(((int64_t)dst[i + 1U] * audio_gain_q15) / 32767);
+    }
+
+    last_sample_l = dst[samples - 2U];
+    last_sample_r = dst[samples - 1U];
   }
   else
   {
-	memset(dst, 0, samples * sizeof(int32_t));
-//    HAL_GPIO_TogglePin(LED_R_GPIO_Port, LED_R_Pin);
+    /* A hard transition to zero is audible as a click.  Conceal an underrun
+       with a one-DMA-half ramp, then wait for a fresh pre-roll. */
+    FillRampToSilence(dst, samples);
   }
 }
 
 void HAL_SAI_TxHalfCpltCallback(SAI_HandleTypeDef *hsai)
 {
-    FillFromRing(&audio_buf[0], AUDIO_SAMPLES/2);
-//    HalfTransfer_CallBack_FS();
+  UNUSED(hsai);
+  FillFromRing(&audio_buf[0], AUDIO_SAMPLES / 2U);
 }
 
 void HAL_SAI_TxCpltCallback(SAI_HandleTypeDef *hsai)
 {
-    FillFromRing(&audio_buf[AUDIO_SAMPLES/2], AUDIO_SAMPLES/2);
-//    TransferComplete_CallBack_FS();
+  UNUSED(hsai);
+  FillFromRing(&audio_buf[AUDIO_SAMPLES / 2U], AUDIO_SAMPLES / 2U);
 }
 /* USER CODE END 0 */
 
@@ -163,14 +225,10 @@ int main(void)
   //DMAスタート
   HAL_SAI_Transmit_DMA(&hsai_BlockB1, (uint8_t*)audio_buf, AUDIO_SAMPLES);
 
-  // DACのミュート解除
-  HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, SET);
-
-  //アンプ安定待ち
-  HAL_Delay(500);
-
-  // アンプ起動
-  HAL_GPIO_WritePin(Amp_SHDN_GPIO_Port, Amp_SHDN_Pin, SET);
+  /* Keep the analog path muted until USB has provided a complete pre-roll.
+     FillFromRing() enables it immediately before the click-free fade-in. */
+  HAL_GPIO_WritePin(XSMT_GPIO_Port, XSMT_Pin, RESET);
+  HAL_GPIO_WritePin(Amp_SHDN_GPIO_Port, Amp_SHDN_Pin, RESET);
   /* USER CODE END 2 */
 
   /* Infinite loop */
